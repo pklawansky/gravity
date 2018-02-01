@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <style>
+        .displayDiv {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            -moz-transform: translate(-50%, -50%);
+            -ms-transform: translate(-50%, -50%);
+            -o-transform: translate(-50%, -50%);
+            -webkit-transform: translate(-50%, -50%);
+            transform: translate(-50%, -50%);
+        }
+    </style>
+
+    <script type="text/javascript">
+
+        var timeSkip = 0.01,
+            steps = 10,
+            pointsToPlot = 100,
+            density = 23877746.0;
+    </script>
+
+</head>
+
+<body>
+
+    <div class="displayDiv">
+        <table>
+            <tr>
+                <td>
+                    <canvas id="myCanvas" height="600" width="600" style="background-color: white; "></canvas>
+                </td>
+                <td>
+                    <canvas id="myCanvas2" height="600" width="600" style="background-color: white; "></canvas>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+
+    <script type="text/javascript">
+        //Defining engine modules
+        (function (vector, $, undefined) {
+
+            vector.spawn = function () {
+                return {
+                    x: 0,
+                    y: 0,
+                    z: 0
+                };
+            }
+
+            vector.add = function (vectA, vectB) {
+                return {
+                    x: vectA.x + vectB.x,
+                    y: vectA.y + vectB.y,
+                    z: vectA.z + vectB.z
+                };
+            };
+
+            vector.subtract = function (vectA, vectB) {
+                return {
+                    x: vectA.x - vectB.x,
+                    y: vectA.y - vectB.y,
+                    z: vectA.z - vectB.z
+                };
+            };
+
+            vector.multiply = function (vectA, numB) {
+                return {
+                    x: vectA.x * numB,
+                    y: vectA.y * numB,
+                    z: vectA.z * numB
+                };
+            };
+
+            vector.divide = function (vectA, numB) {
+                return {
+                    x: vectA.x / numB,
+                    y: vectA.y / numB,
+                    z: vectA.z / numB
+                };
+            };
+
+        }(window.vector = window.vector || {}, jQuery));
+
+        (function (pis, $, undefined) {
+
+            pis.spawn = function () {
+                return {
+                    Id: 0,
+                    IsAlive: true,
+                    Mass: 0,
+                    TimeStamp: 0,
+                    Radius: 0,
+                    Force: vector.spawn(),
+                    Position: vector.spawn(),
+                    Velocity: vector.spawn()
+                }
+            };
+
+        }(window.pis = window.pis || {}, jQuery));
+
+        (function (engine, $, undefined) {
+
+            var G = 0.00000000006673;
+            var IsProcessing = false;
+
+            var GetVolumeFromRadius = function (radius) {
+                var V = 4.0 / 3.0 * Math.pow(radius, 3) * Math.PI;
+                return V;
+            }
+
+            var GetDistanceBetweenTwoPoints = function (point, otherpoint) {
+                var r = Math.sqrt(Math.pow((otherpoint.x - point.x), 2.0) + Math.pow((otherpoint.y - point.y), 2.0) + Math.pow((otherpoint.z - point.z), 2.0));
+                return r;
+            };
+
+            var CalculateGravitationalForceBetweenTwoObjects = function (point, otherpoint) {
+                var r = GetDistanceBetweenTwoPoints(point.Position, otherpoint.Position);
+
+                var F = G * point.Mass * otherpoint.Mass / Math.pow(r, 2.0);
+
+                var v = vector.spawn();
+
+                var dxoverr = (otherpoint.Position.x - point.Position.x) / r;
+                var dyoverr = (otherpoint.Position.y - point.Position.y) / r;
+                var dzoverr = (otherpoint.Position.z - point.Position.z) / r;
+
+                v.x = dxoverr * F;
+                v.y = dyoverr * F;
+                v.z = dzoverr * F;
+
+                return v;
+            };
+
+            var CalculateVelocityDueToForceAppliedOverTime = function (mass, time, force, velocity) {
+                if (velocity == null) {
+                    velocity = vector.spawn();
+                }
+
+                velocity.x += force.x * time / mass;
+                velocity.y += force.y * time / mass;
+                velocity.z += force.z * time / mass;
+
+                return velocity;
+            };
+
+            var CalculatePositionDueToVelocityOverTime = function (timeskip, position, velocity) {
+                if (position == null) {
+                    position = vector.spawn();
+                }
+
+                position = vector.add(position, vector.multiply(velocity, timeskip));
+
+                return position;
+            };
+
+            engine.Points = [];
+
+            var CalculateNewPositions = function (timeskip) {
+                $.each(engine.Points, function () {
+                    var point = this;
+                    if (point.IsAlive) {
+                        var newposition = CalculatePositionDueToVelocityOverTime(timeskip, point.Position, point.Velocity);
+                        point.Position = newposition;
+                        point.TimeStamp += timeskip;
+                    }
+                });
+            };
+
+            var CalculateVelocities = function (timeskip) {
+
+                $.each(engine.Points, function () {
+                    var point = this;
+                    if (point.IsAlive) {
+                        var newvelocity = CalculateVelocityDueToForceAppliedOverTime(point.Mass, timeskip, point.Force, point.Velocity);
+                        point.Velocity = newvelocity;
+                    }
+                });
+            };
+
+            var CalculateForces = function () {
+
+                $.each(engine.Points, function () {
+                    var point = this;
+                    if (point.IsAlive) {
+                        point.Force = vector.spawn();
+
+                        $.each(engine.Points, function () {
+                            var otherpoint = this;
+                            if (otherpoint.IsAlive && otherpoint.Id != point.Id) {
+                                var F = CalculateGravitationalForceBetweenTwoObjects(point, otherpoint);
+                                point.Force = vector.add(point.Force, F);
+                            }
+                        });
+                    }
+                });
+            };
+
+            var SetupPoints = function (count) {
+                engine.Points = [];
+
+                for (var i = 0; i < count; i++) {
+                    
+                    var radius = Math.random() * 15.0;
+
+                    var Velocity = vector.spawn();
+                    Velocity.x = Math.random() * 2.0 - 1.0;
+                    Velocity.y = Math.random() * 2.0 - 1.0;
+                    Velocity.z = Math.random() * 2.0 - 1.0;
+
+                    var p = pis.spawn();
+                    p.Id = i + 1;
+                    p.Mass = density * GetVolumeFromRadius(radius);
+                    p.TimeStamp = 0;
+                    p.IsAlive = true;
+                    p.Radius = radius;
+                    p.Force = vector.spawn();
+                    p.Velocity = Velocity;
+                    p.Position = vector.spawn();
+                    p.Position.x = Math.random() * 100.0;
+                    p.Position.y = Math.random() * 100.0;
+                    p.Position.z = Math.random() * 100.0;
+
+                    engine.Points.push(p);
+                }
+            };
+
+            var GetCenterOfMass = function (points) {
+                if (points == undefined || points == null) points = engine.Points;
+
+                var mx = 0;
+                var my = 0;
+                var mz = 0;
+
+                var mt = 0;
+
+                $.each(points, function () {
+                    var pt = this;
+                    mx += pt.Mass * pt.Position.x;
+                    my += pt.Mass * pt.Position.y;
+                    mz += pt.Mass * pt.Position.z;
+                    mt += pt.Mass;
+                });
+
+                var v = vector.spawn();
+                v.x = mx / mt;
+                v.y = my / mt;
+                v.z = mz / mt;
+
+                return v;
+            };
+
+            var ProcessWallCollision = function (position, velocity, radius) {
+                radius = radius / 8.0;
+                if ((position.x - radius < 0 && velocity.x < 0) || (position.x + radius > 100 && velocity.x > 0)) {
+                    velocity.x = -velocity.x;
+                }
+
+                if ((position.y - radius < 0 && velocity.y < 0) || (position.y + radius > 100 && velocity.y > 0)) {
+                    velocity.y = -velocity.y;
+                }
+
+                if ((position.z - radius < 0 && velocity.z < 0) || (position.z + radius > 100 && velocity.z > 0)) {
+                    velocity.z = -velocity.z;
+                }
+
+                return velocity;
+            };
+
+            var GetRadiusFromVolume = function (volume) {
+                var radius = Math.pow(volume * (3.0 / 4.0) * (1.0 / Math.PI), (1.0 / 3.0));
+                return radius;
+            };
+
+            var SenseCollisions = function () {
+                var cnt = 1;
+
+                $.each(engine.Points, function () {
+                    var point = this;
+                    if (point.IsAlive) {
+
+                        point.Velocity = ProcessWallCollision(point.Position, point.Velocity, point.Radius);
+
+                        $.each(engine.Points, function () {
+                            var otherpoint = this;
+                            if (otherpoint.IsAlive && otherpoint.Id != point.Id) {
+
+                                var dist = GetDistanceBetweenTwoPoints(point.Position, otherpoint.Position);
+                                if (dist <= (point.Radius + otherpoint.Radius) / 5.0) {
+                                    point.IsAlive = false;
+                                    otherpoint.IsAlive = false;
+                                    var newpoint = pis.spawn();
+
+                                    newpoint.Id = engine.Points.length + cnt;
+                                    newpoint.IsAlive = true;
+                                    newpoint.Mass = point.Mass + otherpoint.Mass;
+                                    newpoint.Radius = GetRadiusFromVolume(GetVolumeFromRadius(point.Radius) + GetVolumeFromRadius(otherpoint.Radius));
+                                    newpoint.Force = vector.add(point.Force, otherpoint.Force);
+                                    newpoint.TimeStamp = point.TimeStamp;
+                                    newpoint.Position = GetCenterOfMass([point, otherpoint]);
+                                    newpoint.Velocity = vector.divide((vector.add(vector.multiply(point.Velocity, point.Mass), vector.multiply(otherpoint.Velocity, otherpoint.Mass))), (point.Mass + otherpoint.Mass));
+
+                                    engine.Points.push(newpoint);
+                                    cnt++;
+                                }
+                            }
+                        });
+                    }
+                });
+            };
+
+            engine.setupPointsForSession = function (count) {
+                SetupPoints(count);
+            };
+
+            engine.GetPositions = function (timeskip, steps) {
+                if (!IsProcessing) {
+                    IsProcessing = true;
+                    for (var i = 0; i < steps; i++) {
+                        SenseCollisions();
+                        CalculateForces();
+                        CalculateVelocities(timeskip);
+                        CalculateNewPositions(timeskip);
+                    }
+                    IsProcessing = false;
+                }
+
+                var results = []
+
+                var sortedPoints = []; //TODO: sort by Position.y desc if possible
+                $.each(engine.Points, function () {
+                    var point = this;
+                    if (point.IsAlive) {
+                        sortedPoints.push(point);
+                        results.push({ x: point.Position.x, y: point.Position.y, z: point.Position.z, r: point.Radius });
+                    }
+                });
+
+                var centerofmass = GetCenterOfMass(sortedPoints);
+
+                return { results: results, count: results.Count, com: centerofmass };
+            };
+        }(window.engine = window.engine || {}, jQuery));
+
+
+        var showtrails = false;
+
+        $(document).ready(function () {
+
+            if (showtrails) {
+                drawAxes();
+            }
+
+            engine.setupPointsForSession(pointsToPlot);
+
+            setInterval(function () {
+                processPositions(timeSkip, steps);
+            }, 50);
+        });
+
+        var isbusy = false;
+
+        function processPositions(timeskip, steps) {
+            if (isbusy) {
+                return;
+            }
+            isbusy = true;
+
+            var results = engine.GetPositions(timeskip, steps);
+
+            isbusy = false;
+            if (!showtrails) {
+                clearCanvas();
+            }
+
+            $.each(results.results, function (index, value) {
+                plotItem(value.x, value.y, value.z, value.r, false);
+            });
+            if (!showtrails) {
+                drawAxes();
+            }
+
+            $("#resultsCount").html(results.count);
+
+            plotItem(results.com.x, results.com.y, results.com.z, 3, true);
+        }
+
+        function drawAxes() {
+            var c = document.getElementById("myCanvas");
+            var ctx = c.getContext("2d");
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#000000';
+
+            ctx.moveTo(0, 200);
+            ctx.lineTo(0, 600);
+            ctx.lineTo(400, 600);
+            ctx.moveTo(0, 600);
+            ctx.lineTo(200, 400);
+
+            ctx.moveTo(0, 200);
+            ctx.lineTo(200, 0);
+
+            ctx.lineTo(600, 0);
+            ctx.lineTo(600, 400);
+            ctx.lineTo(400, 600);
+
+            ctx.moveTo(200, 0);
+            ctx.lineTo(200, 400);
+            ctx.lineTo(600, 400);
+
+            ctx.moveTo(0, 200);
+            ctx.lineTo(400, 200);
+            ctx.lineTo(400, 600);
+            ctx.moveTo(400, 200);
+            ctx.lineTo(600, 0);
+
+            ctx.stroke();
+
+            c = document.getElementById("myCanvas2");
+            ctx = c.getContext("2d");
+
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#000000';
+
+            ctx.moveTo(0, 200);
+            ctx.lineTo(0, 600);
+            ctx.lineTo(400, 600);
+            ctx.moveTo(0, 600);
+            ctx.lineTo(200, 400);
+
+            ctx.moveTo(0, 200);
+            ctx.lineTo(200, 0);
+
+            ctx.lineTo(600, 0);
+            ctx.lineTo(600, 400);
+            ctx.lineTo(400, 600);
+
+            ctx.moveTo(200, 0);
+            ctx.lineTo(200, 400);
+            ctx.lineTo(600, 400);
+
+            ctx.moveTo(0, 200);
+            ctx.lineTo(400, 200);
+            ctx.lineTo(400, 600);
+            ctx.moveTo(400, 200);
+            ctx.lineTo(600, 0);
+
+            ctx.stroke();
+        }
+
+        function clearCanvas() {
+            var c = document.getElementById("myCanvas");
+            var ctx = c.getContext("2d");
+            ctx.clearRect(0, 0, c.width, c.height);
+
+            c = document.getElementById("myCanvas2");
+            ctx = c.getContext("2d");
+            ctx.clearRect(0, 0, c.width, c.height);
+        }
+
+        function plotItem(x, y, z, r, iscom) {
+            x = parseFloat(x);
+            y = parseFloat(y);
+            z = parseFloat(z);
+
+            var c = document.getElementById("myCanvas");
+            var ctx = c.getContext("2d");
+
+            var axisx = 4 * x + 2 * y;
+            var axisy = 600 - 4 * z - 2 * y;
+            var radius = r - y * r / 200;
+            if (radius < 0) {
+                radius = 0.001;
+            }
+
+            ctx.beginPath();
+            ctx.arc(axisx, axisy, radius, 0, 2 * Math.PI);
+            ctx.lineWidth = radius / 2.0;
+
+            var col = (y / 100.0 * 9.0).toFixed(0).toString();
+
+            if (iscom) {
+                ctx.strokeStyle = "#ff0000";
+            }
+            else {
+                ctx.strokeStyle = "#" + col + col + col + col + col + col;
+            }
+
+            ctx.stroke();
+
+            if (!iscom) {
+                ctx.beginPath();
+
+                ctx.dashedLine(axisx, axisy, axisx, axisy + 4 * z, 2);
+                ctx.lineWidth = 1;
+                ctx.strokeStyle = '#aaaaaa';
+                ctx.stroke();
+            }
+
+            var y3d = y;
+
+            if (y3d <= 1)
+            { y3d = 1; }
+
+            c = document.getElementById("myCanvas2");
+            ctx = c.getContext("2d");
+
+            axisx = 4 * x + 2 * (y + 100.0 / (y3d * 5.0));
+            axisy = 600 - 4 * z - 2 * y;
+            radius = r - y * r / 200;
+            if (radius < 0) {
+                radius = 0.001;
+            }
+
+            ctx.beginPath();
+            ctx.arc(axisx, axisy, radius, 0, 2 * Math.PI);
+            ctx.lineWidth = radius / 2.0;
+
+            if (iscom) {
+                ctx.strokeStyle = "#ff0000";
+            }
+            else {
+                ctx.strokeStyle = "#" + col + col + col + col + col + col;
+            }
+
+            ctx.stroke();
+
+            if (!iscom) {
+                ctx.beginPath();
+
+                ctx.dashedLine(axisx, axisy, axisx, axisy + 4 * z, 2);
+                ctx.lineWidth = 1;
+                ctx.strokeStyle = '#aaaaaa';
+                ctx.stroke();
+            }
+        }
+
+        CanvasRenderingContext2D.prototype.dashedLine = function (x1, y1, x2, y2, dashLen) {
+            if (dashLen == undefined) dashLen = 2;
+            this.moveTo(x1, y1);
+
+            var dX = x2 - x1;
+            var dY = y2 - y1;
+            var dashes = Math.floor(Math.sqrt(dX * dX + dY * dY) / dashLen);
+            var dashX = dX / dashes;
+            var dashY = dY / dashes;
+
+            var q = 0;
+            while (q++ < dashes) {
+                x1 += dashX;
+                y1 += dashY;
+                this[q % 2 == 0 ? 'moveTo' : 'lineTo'](x1, y1);
+            }
+            this[q % 2 == 0 ? 'moveTo' : 'lineTo'](x2, y2);
+        };
+    </script>
+</body>
+
+</html>
